@@ -1,7 +1,6 @@
 #include <iostream>
 #include <stdio.h>
 #include <opencv2/opencv.hpp>
-#include <Eigen/Dense>
 #include <fstream>
 #include <random>
 #include <experimental/filesystem>
@@ -10,7 +9,6 @@
 
 using namespace cv;
 using namespace std;
-using namespace Eigen;
 namespace fs = experimental::filesystem;
 
 double Get_exposure_time(string path)  // Read exif. Parsing metadata inside jpg/jpeg, https://github.com/cdcseacave/TinyEXIF
@@ -29,21 +27,6 @@ double Get_exposure_time(string path)  // Read exif. Parsing metadata inside jpg
 	else {
 		return 0;
 	}
-}
-
-int* Get_random_pixels(Mat img, int num) {
-	int* pixels = new int[num * 2];
-	std::random_device rd;     // only used once to initialise (seed) engine
-	std::mt19937 rng(rd());    // random-number engine used (Mersenne-Twister in this case)
-	std::uniform_int_distribution<int> uni_width(0, img.size().width); // guaranteed unbiased
-	std::uniform_int_distribution<int> uni_height(0, img.size().height); // guaranteed unbiased
-	for (int i = 0; i < num; i+=2) {
-		int x = uni_width(rng);
-		int y = uni_height(rng);
-		pixels[i] = x;
-		pixels[i + 1] = y;
-	}
-	return pixels;
 }
 
 int* Create_weights() {

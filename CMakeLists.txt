@@ -7,7 +7,6 @@ add_compile_options(-std=c++14)
 project (HDR VERSION 0.1 LANGUAGES CXX)
 #Bring the headers into the project
 include_directories(include)
-include_directories(${EIGEN3_INCLUDE_DIR})
  
 #Bring sources into the project:
 file(GLOB SOURCES "src/*.cpp")
@@ -17,11 +16,5 @@ source_group("Headers" FILES ${HEADERS})
 source_group("Sources" FILES ${SOURCES})
 
 find_package( OpenCV REQUIRED )
-set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
-find_package(Eigen3 REQUIRED)
-message(STATUS "Eigen3 found: ${EIGEN3_FOUND}")
-message(STATUS "Eigen3 include dir found at ${EIGEN3_INCLUDE_DIR}")
-message(STATUS "Eigen3 version: ${EIGEN3_VERSION}")
-
 add_executable(HDR ${SOURCES} ${HEADERS})
 target_link_libraries(HDR ${OpenCV_LIBS} )

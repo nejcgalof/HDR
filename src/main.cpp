@@ -29,7 +29,8 @@ double Get_exposure_time(string path)  // Read exif. Parsing metadata inside jpg
 	}
 }
 
-int* Create_weights() {
+int* Create_weights() 
+{
 	int* weights = new int[256];
 	int max = 255;
 	int min = 0;
@@ -45,50 +46,57 @@ int* Create_weights() {
 	return weights;
 }
 
-int main(int argc, char** argv )
+Mat Reconstruction(Vector<Mat> images, Vector<double> exposure_times, float g[3][256])
 {
-	string path = "HDR_imgs/HDR_imgs/slike/scene";
-	Vector<Mat> images;
-	Vector<double> exposure_times;
-	for (auto & p : fs::directory_iterator(path)) // Take all files inside folder path
+	Mat HDR = Mat::zeros(images[0].size(), CV_32FC3);
+	for (int cBGR = 0; cBGR < 3; cBGR++)
 	{
-		std::cout << p << std::endl;
-		Mat image;
-		image = imread(p.path().string(), CV_LOAD_IMAGE_COLOR); // Read the file
-		if (!image.data) // Check for invalid input
+		for (int r = 0; r < images[0].size().height; r++)
 		{
-			cout << "Could not open or find the image" << std::endl;
-		}
-		else {
-			double exposure_time = Get_exposure_time(p.path().string()); // Get exposure time of image
-			images.push_back(image);
-			exposure_times.push_back(exposure_time);
-			//imshow("image", image);
-			//waitKey(0);
+			for (int c = 0; c < images[0].size().width; c++)
+			{
+				float logIsum = 0;
+				int cnt = 0;
+				for (int t = 0; t < images.size(); t++)
+				{
+					int Z = images[t].at<Vec3b>(r, c)(cBGR);
+					if (Z > 10 && Z < 245) { // don't use pixels, which are too much or too low exposed
+						logIsum += g[cBGR][Z] - log(exposure_times[t]);
+						cnt++;
+					}
+				}
+				HDR.at<Vec3f>(r, c)(cBGR) = log(exp(logIsum / cnt));
+			}
 		}
 	}
-	int rows = images[0].size().height;
-	int cols = images[0].size().width;
-	
-	// Random 100 pixels locations inside image
-	int sample_x[100];
-	int sample_y[100];
-	random_device rd;
-	mt19937 rng(rd());
-	uniform_int_distribution<int> uni_width(0, images[0].size().width-1); // guaranteed unbiased
-	uniform_int_distribution<int> uni_height(0, images[0].size().height-1); // guaranteed unbiased
-	for (int i = 0; i < 100; i ++) {
-		int x = uni_width(rng);
-		int y = uni_height(rng);
-		sample_x[i] = x;
-		sample_y[i] = y;
+	return HDR;
+}
+
+Mat Normalization(Mat HDR)
+{
+	Mat bgr[3];   //destination array
+	split(HDR, bgr);
+
+	for (int cBGR = 0; cBGR < 3; cBGR++)
+	{
+		double min, max;
+		cv::minMaxLoc(bgr[cBGR], &min, &max);
+		for (int r = 0; r < HDR.size().height; r++)
+		{
+			for (int c = 0; c < HDR.size().width; c++)
+			{
+				double Zi = HDR.at<Vec3f>(r, c)(cBGR);
+				double norm = (Zi - min) / (max - min);
+				HDR.at<Vec3f>(r, c)(cBGR) = norm;
+			}
+		}
 	}
+	HDR.convertTo(HDR, CV_8UC3, 255.0);
+	return HDR;
+}
 
-	// Generate weights - weigthing function values
-	int* weights = Create_weights();
-
-	// SVD for Finding Response Function
-	float g[3][256]; // is the log exposure corresponding to pixel value
+void gsolve(Vector<Mat> images, Vector<double> exposure_times, int* weights, int* sample_x, int* sample_y, float g[3][256], float lambda = 10)
+{
 	for (int cBGR = 0; cBGR < 3; cBGR++)
 	{
 		Mat A = Mat::zeros(images.size() * 100 + 1 + 256, 256 + 100, CV_32F);
@@ -114,8 +122,6 @@ int main(int argc, char** argv )
 		A.at<float>(k, 128) = 1;
 		k++;
 
-		float lambda = 10;
-
 		// Include the smoothness equations
 		for (int i = 1; i <= 254; i++)
 		{
@@ -133,43 +139,57 @@ int main(int argc, char** argv )
 			g[cBGR][i] = x.at<float>(i);
 		}
 	}
-	// Final HDR
-	Mat HDR = Mat::zeros(images[0].size(), CV_32FC3);
-	for (int cBGR = 0; cBGR < 3; cBGR++)
+}
+
+int main(int argc, char** argv )
+{
+	// Get images and exposure times
+	string path = "HDR_imgs/HDR_imgs/slike/scene";
+	Vector<Mat> images;
+	Vector<double> exposure_times;
+	for (auto & p : fs::directory_iterator(path)) // Take all files inside folder path
 	{
-		for (int r = 0; r < rows; r++)
+		std::cout << p << std::endl;
+		Mat image;
+		image = imread(p.path().string(), CV_LOAD_IMAGE_COLOR); // Read the file
+		if (!image.data) // Check for invalid input
 		{
-			for (int c = 0; c < cols; c++)
-			{
-				float logIsum = 0;
-				for (int t = 0; t < images.size(); t++)
-				{
-					int bit8 = images[t].at<Vec3b>(r, c)(cBGR);
-					logIsum += g[cBGR][bit8] - log(exposure_times[t]);
-				}
-				HDR.at<Vec3f>(r, c)(cBGR) = log(exp(logIsum / images.size()));
-			}
+			cout << "Could not open or find the image" << std::endl;
+		}
+		else {
+			double exposure_time = Get_exposure_time(p.path().string()); // Get exposure time of image
+			images.push_back(image);
+			exposure_times.push_back(exposure_time);
 		}
 	}
-
-	Mat bgr[3];   //destination array
-	split(HDR, bgr);
-
-	for (int cBGR = 0; cBGR < 3; cBGR++)
-	{
-		double min, max;
-		cv::minMaxLoc(bgr[cBGR], &min, &max);
-		for (int r = 0; r < rows; r++)
-		{
-			for (int c = 0; c < cols; c++)
-			{
-				double Zi = HDR.at<Vec3f>(r, c)(cBGR);
-				double norm = (Zi - min) / (max - min);
-				HDR.at<Vec3f>(r, c)(cBGR) = norm;
-			}
-		}
+	
+	// Random 100 pixels locations inside image
+	int sample_x[100];
+	int sample_y[100];
+	random_device rd;
+	mt19937 rng(rd());
+	uniform_int_distribution<int> uni_width(0, images[0].size().width-1); // guaranteed unbiased
+	uniform_int_distribution<int> uni_height(0, images[0].size().height-1); // guaranteed unbiased
+	for (int i = 0; i < 100; i ++) {
+		int x = uni_width(rng);
+		int y = uni_height(rng);
+		sample_x[i] = x;
+		sample_y[i] = y;
 	}
-	HDR.convertTo(HDR, CV_8UC3, 255.0);
+
+	// Generate weights - weigthing function values
+	int* weights = Create_weights();
+
+	// SVD for Finding Response Function
+	float g[3][256]; // is the log exposure corresponding to pixel value
+	gsolve(images, exposure_times, weights, sample_x, sample_y, g);
+
+	// Reconstruction
+	Mat HDR = Reconstruction(images, exposure_times, g);
+
+	// Normalization
+	HDR = Normalization(HDR);
+
 	imwrite("resultHDR.jpg", HDR);
 	imshow("HDR", HDR);
 	waitKey(0);

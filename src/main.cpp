@@ -144,7 +144,19 @@ void gsolve(Vector<Mat> images, Vector<double> exposure_times, int* weights, int
 int main(int argc, char** argv )
 {
 	// Get images and exposure times
-	string path = "HDR_imgs/HDR_imgs/slike/scene";
+	string path;
+	if (argc != 2)
+	{
+		printf("usage: HDR.exe 'Folder with images' \n");
+		return -1;
+	}
+	else {
+		path = argv[1];
+	}
+	if (!fs::exists(path)) {
+		printf("folder not exist\n");
+		return -1;
+	}
 	Vector<Mat> images;
 	Vector<double> exposure_times;
 	for (auto & p : fs::directory_iterator(path)) // Take all files inside folder path

@@ -33,9 +33,9 @@ int* Create_weights() {
 	int* weights = new int[256];
 	int max = 255;
 	int min = 0;
-	int mid = (max - min) / 2;
+	int mid = (max + min) / 2;
 	for (int i = 0; i < 256; i++) {
-		if (i < mid) {
+		if (i <= mid) {
 			weights[i] = i - min;
 		}
 		else {
@@ -69,13 +69,14 @@ int main(int argc, char** argv )
 	}
 	int rows = images[0].size().height;
 	int cols = images[0].size().width;
+	
+	// Random 100 pixels locations inside image
 	int sample_x[100];
 	int sample_y[100];
-
-	std::random_device rd;     // only used once to initialise (seed) engine
-	std::mt19937 rng(rd());    // random-number engine used (Mersenne-Twister in this case)
-	std::uniform_int_distribution<int> uni_width(0, images[0].size().width-1); // guaranteed unbiased
-	std::uniform_int_distribution<int> uni_height(0, images[0].size().height-1); // guaranteed unbiased
+	random_device rd;
+	mt19937 rng(rd());
+	uniform_int_distribution<int> uni_width(0, images[0].size().width-1); // guaranteed unbiased
+	uniform_int_distribution<int> uni_height(0, images[0].size().height-1); // guaranteed unbiased
 	for (int i = 0; i < 100; i ++) {
 		int x = uni_width(rng);
 		int y = uni_height(rng);
@@ -83,93 +84,94 @@ int main(int argc, char** argv )
 		sample_y[i] = y;
 	}
 
+	// Generate weights - weigthing function values
 	int* weights = Create_weights();
 
 	// SVD for Finding Response Function
-	float Im[3][256];
+	float g[3][256]; // is the log exposure corresponding to pixel value
 	for (int cBGR = 0; cBGR < 3; cBGR++)
 	{
-		Mat A = Mat::zeros(images.size() * 100 + 1 + 254, 256 + 100, CV_32F);
-		Mat B = Mat::zeros(images.size() * 100 + 1 + 254, 1, CV_32F);
+		Mat A = Mat::zeros(images.size() * 100 + 1 + 256, 256 + 100, CV_32F);
+		Mat b = Mat::zeros(images.size() * 100 + 1 + 256, 1, CV_32F);
 
-		int rowcnt = 0;
-
-		for (int s = 0; s < 100; s++)
+		// Include the data-fitting equations
+		int k = 0;
+		for (int i = 0; i < 100; i++)
 		{
-			for (int t = 0; t < images.size(); t++)
+			for (int j = 0; j < images.size(); j++)
 			{
-				int bit8 = images[t].at<Vec3b>(sample_y[s], sample_x[s])[cBGR];
-				float w = weights[bit8];
+				int pixel = images[j].at<Vec3b>(sample_y[i], sample_x[i])[cBGR];
+				float w = weights[pixel];
 
-				A.at<float>(rowcnt, bit8) = w;
-				A.at<float>(rowcnt, 256 + s) = -w;
-				B.at<float>(rowcnt, 0) = w * log(exposure_times[t]);
-				rowcnt++;
+				A.at<float>(k, pixel) = w;
+				A.at<float>(k, 256 + i) = -w;
+				b.at<float>(k, 0) = w * log(exposure_times[j]);
+				k++;
 			}
 		}
 
-		A.at<float>(rowcnt, 128) = 1;
-		rowcnt++;
+		// Fix the curve by setting its middle value to 0
+		A.at<float>(k, 128) = 1;
+		k++;
 
+		float lambda = 10;
+
+		// Include the smoothness equations
 		for (int i = 1; i <= 254; i++)
 		{
-			float lambda = 10; // Using OpenCV default
-			A.at<float>(rowcnt, i) = -2 * lambda * weights[i];
-			A.at<float>(rowcnt, i - 1) = lambda * weights[i];
-			A.at<float>(rowcnt, i + 1) = lambda * weights[i];
-			rowcnt++;
+			A.at<float>(k, i) = -2 * lambda * weights[i];
+			A.at<float>(k, i - 1) = lambda * weights[i];
+			A.at<float>(k, i + 1) = lambda * weights[i];
+			k++;
 		}
 
-		Mat x_star;
-		solve(A, B, x_star, DECOMP_SVD); // Pseudo Inverse
+		// Solve the system using SVD
+		Mat x;
+		solve(A, b, x, DECOMP_SVD); // Pseudo Inverse
 
-		for (int i = 0; i < 256; i++)
-			Im[cBGR][i] = x_star.at<float>(i);
-
-		// Final HDR
-		Mat HDR = Mat::zeros(images[0].size(), CV_32FC3);
-
-
-		for (int cBGR = 0; cBGR < 3; cBGR++)
+		for (int i = 0; i < 256; i++) {
+			g[cBGR][i] = x.at<float>(i);
+		}
+	}
+	// Final HDR
+	Mat HDR = Mat::zeros(images[0].size(), CV_32FC3);
+	for (int cBGR = 0; cBGR < 3; cBGR++)
+	{
+		for (int r = 0; r < rows; r++)
 		{
-			for (int r = 0; r < rows; r++)
+			for (int c = 0; c < cols; c++)
 			{
-				for (int c = 0; c < cols; c++)
+				float logIsum = 0;
+				for (int t = 0; t < images.size(); t++)
 				{
-					float logIsum = 0;
-
-					for (int t = 0; t < images.size(); t++)
-					{
-						int bit8 = images[t].at<Vec3b>(r, c)(cBGR);
-						logIsum += Im[cBGR][bit8] - log(exposure_times[t]);
-					}
-					HDR.at<Vec3f>(r, c)(cBGR) = log(exp(logIsum / images.size()));
+					int bit8 = images[t].at<Vec3b>(r, c)(cBGR);
+					logIsum += g[cBGR][bit8] - log(exposure_times[t]);
 				}
+				HDR.at<Vec3f>(r, c)(cBGR) = log(exp(logIsum / images.size()));
 			}
 		}
-
-		Mat bgr[3];   //destination array
-		split(HDR, bgr);
-
-		for (int cBGR = 0; cBGR < 3; cBGR++)
-		{
-			double min, max;
-			cv::minMaxLoc(bgr[cBGR], &min, &max);
-			for (int r = 0; r < rows; r++)
-			{
-				for (int c = 0; c < cols; c++)
-				{
-					double Zi = HDR.at<Vec3f>(r, c)(cBGR);
-					double norm = (Zi - min) / (max - min);
-					HDR.at<Vec3f>(r, c)(cBGR) = norm;
-				}
-			}
-		}
-		imshow("HDR", HDR);
-		HDR.convertTo(HDR, CV_8UC3, 255.0);
-		imwrite("resultHDR.jpg", HDR);
 	}
 
+	Mat bgr[3];   //destination array
+	split(HDR, bgr);
+
+	for (int cBGR = 0; cBGR < 3; cBGR++)
+	{
+		double min, max;
+		cv::minMaxLoc(bgr[cBGR], &min, &max);
+		for (int r = 0; r < rows; r++)
+		{
+			for (int c = 0; c < cols; c++)
+			{
+				double Zi = HDR.at<Vec3f>(r, c)(cBGR);
+				double norm = (Zi - min) / (max - min);
+				HDR.at<Vec3f>(r, c)(cBGR) = norm;
+			}
+		}
+	}
+	HDR.convertTo(HDR, CV_8UC3, 255.0);
+	imwrite("resultHDR.jpg", HDR);
+	imshow("HDR", HDR);
 	waitKey(0);
     return 0;
 }

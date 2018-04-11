@@ -62,15 +62,6 @@ int* Create_weights() {
 	return weights;
 }
 
-float weight(int bit8)
-{
-	//if (bit8 < 128) return bit8 + 1.f;
-	//else return 256.f - bit8;
-	if (bit8 < 128) return bit8;
-	else return 255.f - bit8;
-}
-
-
 int main(int argc, char** argv )
 {
 	string path = "HDR_imgs/HDR_imgs/slike/scene";
@@ -109,6 +100,8 @@ int main(int argc, char** argv )
 		sample_y[i] = y;
 	}
 
+	int* weights = Create_weights();
+
 	// SVD for Finding Response Function
 	float Im[3][256];
 	for (int cBGR = 0; cBGR < 3; cBGR++)
@@ -123,7 +116,7 @@ int main(int argc, char** argv )
 			for (int t = 0; t < images.size(); t++)
 			{
 				int bit8 = images[t].at<Vec3b>(sample_y[s], sample_x[s])[cBGR];
-				float w = weight(bit8);
+				float w = weights[bit8];
 
 				A.at<float>(rowcnt, bit8) = w;
 				A.at<float>(rowcnt, 256 + s) = -w;
@@ -138,9 +131,9 @@ int main(int argc, char** argv )
 		for (int i = 1; i <= 254; i++)
 		{
 			float lambda = 10; // Using OpenCV default
-			A.at<float>(rowcnt, i) = -2 * lambda * weight(i);
-			A.at<float>(rowcnt, i - 1) = lambda * weight(i);
-			A.at<float>(rowcnt, i + 1) = lambda * weight(i);
+			A.at<float>(rowcnt, i) = -2 * lambda * weights[i];
+			A.at<float>(rowcnt, i - 1) = lambda * weights[i];
+			A.at<float>(rowcnt, i + 1) = lambda * weights[i];
 			rowcnt++;
 		}
 
@@ -164,18 +157,14 @@ int main(int argc, char** argv )
 
 					for (int t = 0; t < images.size(); t++)
 					{
-						
 						int bit8 = images[t].at<Vec3b>(r, c)(cBGR);
-						//if (bit8 > 10 && bit8 < 245) {
-							logIsum += Im[cBGR][bit8] - log(exposure_times[t]);
-						//}
-						
+						logIsum += Im[cBGR][bit8] - log(exposure_times[t]);
 					}
-
 					HDR.at<Vec3f>(r, c)(cBGR) = log(exp(logIsum / images.size()));
 				}
 			}
 		}
+
 		Mat bgr[3];   //destination array
 		split(HDR, bgr);
 
